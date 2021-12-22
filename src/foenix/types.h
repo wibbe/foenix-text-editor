@@ -6,6 +6,7 @@
 #define __MCP_TYPES_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 /*
  * Function types
@@ -14,8 +15,14 @@
 /*
  * Integer types in their standard sizes, signed and unsigned.
  */
-
-typedef unsigned char bool;
+/*
+typedef unsigned char u8;
+typedef char s8;
+typedef unsigned short u16;
+typedef short s16;
+typedef unsigned long u32;
+typedef long s32;
+*/
 
 //
 // A color (BGR)
@@ -181,11 +188,36 @@ typedef short (*p_file_loader)(short chan, long destination, long * start);
  * dev/console
  *========================================*/
 
-#define CON_IOCTRL_SET_XY       0x03
-#define CON_IOCTRL_GET_XY       0x04
-#define CON_IOCTRL_SET_COLOR    0x05
-#define CON_IOCTRL_CLEAR_SCREEN 0x06
-#define CON_IOCTRL_CLEAR_LINE   0x07
+#define CON_IOCTRL_ANSI_ON      0x01            /* IOCTRL Command: turn on ANSI terminal codes */
+#define CON_IOCTRL_ANSI_OFF     0x02            /* IOCTRL Command: turn off ANSI terminal codes */
+#define CON_IOCTRL_ECHO_ON      0x03            /* IOCTRL Command: turn on character echoing */
+#define CON_IOCTRL_ECHO_OFF     0x04            /* IOCTRL Command: turn off character echoing */
+#define CON_IOCTRL_SET_XY       0x05
+#define CON_IOCTRL_GET_XY       0x06
+#define CON_IOCTRL_SET_COLOR    0x07
+#define CON_IOCTRL_CLEAR_SCREEN 0x08
+#define CON_IOCTRL_CLEAR_LINE   0x09
+#define CON_IOCTRL_GET_SIZE     0x0A
+
+#define CON_KEY_CTRL_Q          0x11
+
+#define CON_COLOR_BLACK         0
+#define CON_COLOR_RED           1
+#define CON_COLOR_GREEN         2
+#define CON_COLOR_YELLOW        3
+#define CON_COLOR_BLUE          4
+#define CON_COLOR_ORANGE        5
+#define CON_COLOR_CYAN          6
+#define CON_COLOR_GREY          7
+#define CON_COLOR_DARK_GREY     8
+#define CON_COLOR_BRIGHT_RED    9
+#define CON_COLOR_BRIGHT_GREEN  10
+#define CON_COLOR_BRIGHT_YELLOW 11
+#define CON_COLOR_BRIGHT_BLUE   12
+#define CON_COLOR_BRIGHT_ORANGE 13
+#define CON_COLOR_BRIGHT_CYAN   14
+#define CON_COLOR_WHITE         15
+
 
 typedef struct s_con_cursor {
     short screen;
@@ -203,6 +235,12 @@ typedef struct s_con_clear {
     short screen;
     short mode;
 } t_con_clear, *p_con_clear;
+
+typedef struct s_con_size {
+    short screen;
+    short x;
+    short y;
+} t_con_size, *p_con_size;
 
 /*=========================================
  * dev/rtc

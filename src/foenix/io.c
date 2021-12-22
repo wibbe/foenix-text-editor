@@ -32,11 +32,11 @@ static mode_map_t mapping[] = {
 };
 
 
-int __open(const char *name,const char *mode) {
+int __open(const char *name, const char *mode) {
     int result = -1;
     int m = -1;
 
-    for (int i=0; i<8; i++) {
+    for (int i = 0; i < 8; i++) {
         char *map = mapping[i].posix;
         if (strcmp(mode, map) == 0) {
             m = mapping[i].fsys;
@@ -57,7 +57,7 @@ void __close(int h) {
     }
 }
 
-size_t __read(int h,char *p,size_t l) {
+size_t __read(int h, char *p, size_t l) {
     if (h == STDIN_FILENO) {
         return sys_chan_read(0, p, l);
     } else if (h > STDERR_FILENO) {
@@ -67,17 +67,17 @@ size_t __read(int h,char *p,size_t l) {
     }
 }
 
-size_t __write(int h,const char *p,size_t l) {
+size_t __write(int h, const char *p, size_t l) {
     if (h == STDOUT_FILENO || h == STDERR_FILENO) {
-        return sys_chan_write(0, p, l);
+        return sys_chan_write(0, (char *)p, l);
     } else if (h == STDIN_FILENO) {
         return -1;
     } else {
-        return sys_chan_write(h - 3, p, l);
+        return sys_chan_write(h - 3, (char *)p, l);
     }
 }
 
-off_t __seek(int h,off_t offset,int origin) {
+int __seek(int h, int offset, int origin) {
     // Currently we dont support SEEK_END
     if (origin == 3) return -1;
 

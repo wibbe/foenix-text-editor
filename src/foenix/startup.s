@@ -21,6 +21,13 @@ loop:
 empty:
 
 ;	for systems with ROM, copy data init
+    
+    ; Initialize memory allocation routines
+    move.l #___heapend,d0
+    move.l d0,-(sp)
+    move.l #___heap,d0
+    move.l d0,-(sp)
+    jsr _mem_init
 
 ;	call __main
     move.l a2,-(sp)             ; Push the parameters list

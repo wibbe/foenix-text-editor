@@ -45,27 +45,28 @@ export CC = vc
 export DEFINES = -DCPU=$(CPU_NUMBER) -DMODEL=$(MODEL_NUMBER)
 
 ifeq ($(OS),Windows_NT)
-	export CFLAGS = -cpu=$(VBCC_CPU) +$(CFG_FILE) -I. -I$(CURDIR) -I$(CURDIR)/syscall
+	export CFLAGS = -cpu=$(VBCC_CPU) +$(CFG_FILE) -I. -I$(CURDIR) -I$(CURDIR)/foenix
 	export RM = cmd /C del /Q /F
 else
-	export CFLAGS = -cpu=$(VBCC_CPU) +$(CFG_FILE)_linux -I. -I$(CURDIR) -I$(CURDIR)/syscall
+	export CFLAGS = -cpu=$(VBCC_CPU) +$(CFG_FILE)_linux -I. -I$(CURDIR) -I$(CURDIR)/foenix
 	export RM = rm -f
 endif
 
-syscall_c_src := $(wildcard syscall/*.c)
-syscall_c_obj := $(subst .c,.o,$(syscall_c_src))
+foenix_c_src := $(wildcard foenix/*.c)
+foenix_c_obj := $(subst .c,.o,$(foenix_c_src))
 c_src :=  $(wildcard *.c)
+h_src := $(wildcard *.h)
 c_obj := $(subst .c,.o,$(c_src))
 
-.PHONY: all syscall
+.PHONY: all foenix
 
-all: fte.bin syscall
+all: fte.bin foenix
 
-syscall:
-	$(MAKE) --directory=syscall
+foenix:
+	$(MAKE) --directory=foenix
 
-fte.bin: $(c_obj) syscall
-	$(CC) $(CFLAGS) $(DEFINES) -o fte.bin $(c_obj) $(syscall_c_obj)
+fte.bin: $(c_obj) $(h_src) foenix
+	$(CC) $(CFLAGS) $(DEFINES) -o fte.bin $(c_obj) $(foenix_c_obj)
 
 %.o: %.c $(DEPS)
 	$(CC) -S -c -o $@ $< $(CFLAGS) $(DEFINES)
@@ -74,4 +75,4 @@ fte.bin: $(c_obj) syscall
 
 clean:
 	$(RM) *.bin *.o *.asm
-	$(MAKE) --directory=syscall clean
+	$(MAKE) --directory=foenix clean
