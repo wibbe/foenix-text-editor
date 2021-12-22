@@ -40,13 +40,28 @@ static uint16_t _cursor_y = 0;
 
 static line_t *_document_first_line = 0;
 
+static char _buffer_prompt[32] = {0};
+static uint16_t _buffer_prompt_len;
+static line_t *_buffer_line = 0;
+static bool _in_buffer = false;
+static command_t _buffer_accept_cmd;
+static command_t _buffer_reject_cmd;
+static location_t _buffer_old_cursor;
+
+
 static command_t _basic_commands[256];
+static command_t _buffer_commands[256];
 static command_t * _current_commands;
 
 static line_t _line_cache_8 = {0};
 static line_t _line_cache_32 = {0};
 static line_t _line_cache_64 = {0};
 static line_t _line_cache_128 = {0};
+
+
+
+
+static void display_statusbar(char * msg);
 
 
 
@@ -192,6 +207,9 @@ static void new_document(void)
 
 static uint16_t get_line_number(line_t *current)
 {
+	if (current == _buffer_line)
+		return _height - 1;
+
 	line_t * line = _scroll.line;
 	uint16_t line_number = 0;
 
@@ -213,7 +231,8 @@ static void update_cursor(void)
 {
 	line_t *line = _cursor.line;
 
-	_cursor_x = 0;
+	_cursor_x = _in_buffer ? _buffer_prompt_len : 0;
+
 	for (uint8_t i = 0; i < _cursor.offset; ++i)
 	{
 		uint8_t ch = line->data[i];
@@ -233,54 +252,53 @@ static void update_cursor(void)
 	con_set_xy(_cursor_x, _cursor_y);
 }
 
-static void display_statusbar(char * msg)
+
+static void display_line(line_t *line)
 {
-	con_set_xy(0, _height - 1);
-	con_set_color(CON_COLOR_BLUE, CON_COLOR_GREY);
-	con_clear_line();
-
-	int len = strlen(msg);
-	sys_chan_write_b(0, ' ');
-	sys_chan_write(0, msg, len);
-
-	con_set_color(CON_COLOR_GREY, CON_COLOR_BLUE);
-	con_set_xy(_cursor_x, _cursor_y);
-}
-
-static void redisplay_line(line_t *line)
-{
-	con_clear_line();
-
 	uint8_t pos = 0;
-	for (uint8_t i = 0; i < line->len; ++i)
+	for (uint8_t i = 0; i < _width; ++i)
 	{
-		uint8_t ch = line->data[i];
-
-		if (ch == '\t')
+		if (i < line->len)
 		{
-			uint8_t tab_count = pos / 2;
-			uint8_t new_pos = (tab_count + 1) * 2;
+			uint8_t ch = line->data[i];
 
-			while (pos < new_pos)
+			if (ch == '\t')
+			{
+				uint8_t tab_count = pos / 2;
+				uint8_t new_pos = (tab_count + 1) * 2;
+
+				while (pos < new_pos)
+				{
+					++pos;
+					con_out_raw(' ');
+				}
+			}
+			else
 			{
 				++pos;
-				sys_chan_write_b(0, ' ');
+				con_out_raw(ch);
 			}
 		}
 		else
 		{
-			++pos;
-			sys_chan_write_b(0, ch);
+			con_out_raw(' ');
 		}
 	}
 }
 
 static void redisplay_current_line(void)
 {
-	uint16_t line_number = get_current_line_number();
-	con_set_xy(0, line_number);
+	if (_in_buffer)
+	{
+		display_statusbar(0);
+	}
+	else
+	{
+		uint16_t line_number = get_line_number(_cursor.line);
+		con_set_xy(0, line_number);
+		display_line(_cursor.line);
+	}
 
-	redisplay_line(_cursor.line);
 	update_cursor();
 }
 
@@ -294,8 +312,8 @@ static void redisplay_all(void)
 
 	while (it != 0 && line_number < (_height - 1))
 	{
-		redisplay_line(it);
-		sys_chan_write_b(0, '\n');
+		display_line(it);
+		con_newline();
 		
 		line_number++;
 		it = it->next;
@@ -311,8 +329,8 @@ static void redisplay_line_down(line_t *line)
 
 	while (line != 0 && line_number < (_height - 1))
 	{
-		redisplay_line(line);
-		sys_chan_write_b(0, '\n');
+		display_line(line);
+		con_newline();
 
 		line_number++;
 		line = line->next;
@@ -321,6 +339,60 @@ static void redisplay_line_down(line_t *line)
 	update_cursor();
 }
 
+static void display_statusbar(char * msg)
+{
+	con_set_xy(0, _height - 1);
+	con_set_color(CON_COLOR_BLUE, CON_COLOR_GREY);
+
+	if (_in_buffer)
+	{
+		con_write(_buffer_prompt, _buffer_prompt_len);
+		display_line(_buffer_line);
+	}
+	else
+	{
+		int len = strlen(msg);
+		con_clear_line();
+		con_out(' ');
+		con_write(msg, len);
+	}
+	con_set_color(CON_COLOR_GREY, CON_COLOR_BLUE);
+	con_set_xy(_cursor_x, _cursor_y);
+}
+
+/** Buffer Handling **/
+
+static bool buffer_generic_reject(uint8_t ch)
+{
+	_in_buffer = false;
+	_cursor = _buffer_old_cursor;
+	_current_commands = _basic_commands;
+
+	update_cursor();
+}
+
+static void enter_buffer(char *prompt, command_t accept, command_t reject)
+{
+	_in_buffer = true;
+	_buffer_accept_cmd = accept;
+	_buffer_reject_cmd = reject == 0 ? buffer_generic_reject : reject;
+	_buffer_line->len = 0;
+
+	_buffer_old_cursor = _cursor;
+	_cursor.line = _buffer_line;
+	_cursor.offset = 0;
+
+	_current_commands = _buffer_commands;
+
+	_buffer_prompt_len = strlen(prompt);
+	if (_buffer_prompt_len > sizeof(_buffer_prompt))
+		_buffer_prompt_len = sizeof(_buffer_prompt_len);
+
+	memcpy(_buffer_prompt, prompt, _buffer_prompt_len);
+
+	display_statusbar(0);
+	update_cursor();
+}
 
 
 /** Commands **/
@@ -468,7 +540,7 @@ static bool cmd_move_left(uint8_t ch)
 		--_cursor.offset;
 		update_cursor();
 	}
-	else
+	else if (!_in_buffer)
 	{
 		_cursor.offset = 255;	// this ensures we are placed at the end of the line
 		cmd_move_up(ch);		
@@ -484,7 +556,7 @@ static bool cmd_move_right(uint8_t ch)
 		++_cursor.offset;
 		update_cursor();
 	}
-	else
+	else if (!_in_buffer)
 	{
 		_cursor.offset = 0;
 		cmd_move_down(ch);
@@ -492,8 +564,118 @@ static bool cmd_move_right(uint8_t ch)
 	return true;
 }
 
+static bool cmd_document_save_as(uint8_t ch)
+{
+	enter_buffer("Save as:", 0, 0);
+	return true;
+}
+
+static bool cmd_reject_buffer(uint8_t ch)
+{
+	if (_in_buffer && _buffer_reject_cmd)
+		_buffer_reject_cmd(ch);
+
+	return true;
+}
+
 
 /** Main **/
+
+static void add_char_commands(command_t *commands)
+{
+	commands['a'] = cmd_insert_char;
+	commands['b'] = cmd_insert_char;
+	commands['c'] = cmd_insert_char;
+	commands['d'] = cmd_insert_char;
+	commands['e'] = cmd_insert_char;
+	commands['f'] = cmd_insert_char;
+	commands['g'] = cmd_insert_char;
+	commands['h'] = cmd_insert_char;
+	commands['i'] = cmd_insert_char;
+	commands['j'] = cmd_insert_char;
+	commands['k'] = cmd_insert_char;
+	commands['l'] = cmd_insert_char;
+	commands['m'] = cmd_insert_char;
+	commands['n'] = cmd_insert_char;
+	commands['o'] = cmd_insert_char;
+	commands['p'] = cmd_insert_char;
+	commands['q'] = cmd_insert_char;
+	commands['r'] = cmd_insert_char;
+	commands['s'] = cmd_insert_char;
+	commands['t'] = cmd_insert_char;
+	commands['u'] = cmd_insert_char;
+	commands['v'] = cmd_insert_char;
+	commands['w'] = cmd_insert_char;
+	commands['x'] = cmd_insert_char;
+	commands['y'] = cmd_insert_char;
+	commands['z'] = cmd_insert_char;
+	commands['A'] = cmd_insert_char;
+	commands['B'] = cmd_insert_char;
+	commands['C'] = cmd_insert_char;
+	commands['D'] = cmd_insert_char;
+	commands['E'] = cmd_insert_char;
+	commands['F'] = cmd_insert_char;
+	commands['G'] = cmd_insert_char;
+	commands['H'] = cmd_insert_char;
+	commands['I'] = cmd_insert_char;
+	commands['J'] = cmd_insert_char;
+	commands['K'] = cmd_insert_char;
+	commands['L'] = cmd_insert_char;
+	commands['M'] = cmd_insert_char;
+	commands['N'] = cmd_insert_char;
+	commands['O'] = cmd_insert_char;
+	commands['P'] = cmd_insert_char;
+	commands['Q'] = cmd_insert_char;
+	commands['R'] = cmd_insert_char;
+	commands['S'] = cmd_insert_char;
+	commands['T'] = cmd_insert_char;
+	commands['U'] = cmd_insert_char;
+	commands['V'] = cmd_insert_char;
+	commands['W'] = cmd_insert_char;
+	commands['X'] = cmd_insert_char;
+	commands['Y'] = cmd_insert_char;
+	commands['Z'] = cmd_insert_char;	
+	commands['0'] = cmd_insert_char;
+	commands['1'] = cmd_insert_char;
+	commands['2'] = cmd_insert_char;
+	commands['3'] = cmd_insert_char;
+	commands['4'] = cmd_insert_char;
+	commands['5'] = cmd_insert_char;
+	commands['6'] = cmd_insert_char;
+	commands['7'] = cmd_insert_char;
+	commands['8'] = cmd_insert_char;
+	commands['9'] = cmd_insert_char;
+	commands[','] = cmd_insert_char;
+	commands['.'] = cmd_insert_char;
+	commands['-'] = cmd_insert_char;
+	commands['_'] = cmd_insert_char;
+	commands['?'] = cmd_insert_char;
+	commands['!'] = cmd_insert_char;
+	commands['"'] = cmd_insert_char;
+	commands['#'] = cmd_insert_char;
+	commands['$'] = cmd_insert_char;
+	commands['%'] = cmd_insert_char;
+	commands['&'] = cmd_insert_char;
+	commands['/'] = cmd_insert_char;
+	commands['\\'] = cmd_insert_char;
+	commands['{'] = cmd_insert_char;
+	commands['}'] = cmd_insert_char;
+	commands['['] = cmd_insert_char;
+	commands[']'] = cmd_insert_char;
+	commands['('] = cmd_insert_char;
+	commands[')'] = cmd_insert_char;
+	commands['='] = cmd_insert_char;
+	commands['+'] = cmd_insert_char;
+	commands['?'] = cmd_insert_char;
+	commands['*'] = cmd_insert_char;
+	commands['<'] = cmd_insert_char;
+	commands['>'] = cmd_insert_char;
+	commands['|'] = cmd_insert_char;
+	commands[':'] = cmd_insert_char;
+	commands[';'] = cmd_insert_char;
+	commands[' '] = cmd_insert_char;
+}
+
 
 int main(int argc, char * argv[])
 {
@@ -505,95 +687,36 @@ int main(int argc, char * argv[])
 
 
 	memset(_basic_commands, 0, sizeof(_basic_commands));
+	memset(_buffer_commands, 0, sizeof(_buffer_commands));
+
+	add_char_commands(_basic_commands);
+	add_char_commands(_buffer_commands);
+
 	_basic_commands[CON_KEY_CTRL_Q] = cmd_quit;
-	_basic_commands['a'] = cmd_insert_char;
-	_basic_commands['b'] = cmd_insert_char;
-	_basic_commands['c'] = cmd_insert_char;
-	_basic_commands['d'] = cmd_insert_char;
-	_basic_commands['e'] = cmd_insert_char;
-	_basic_commands['f'] = cmd_insert_char;
-	_basic_commands['g'] = cmd_insert_char;
-	_basic_commands['h'] = cmd_insert_char;
-	_basic_commands['i'] = cmd_insert_char;
-	_basic_commands['j'] = cmd_insert_char;
-	_basic_commands['k'] = cmd_insert_char;
-	_basic_commands['l'] = cmd_insert_char;
-	_basic_commands['m'] = cmd_insert_char;
-	_basic_commands['n'] = cmd_insert_char;
-	_basic_commands['o'] = cmd_insert_char;
-	_basic_commands['p'] = cmd_insert_char;
-	_basic_commands['q'] = cmd_insert_char;
-	_basic_commands['r'] = cmd_insert_char;
-	_basic_commands['s'] = cmd_insert_char;
-	_basic_commands['t'] = cmd_insert_char;
-	_basic_commands['u'] = cmd_insert_char;
-	_basic_commands['v'] = cmd_insert_char;
-	_basic_commands['w'] = cmd_insert_char;
-	_basic_commands['x'] = cmd_insert_char;
-	_basic_commands['y'] = cmd_insert_char;
-	_basic_commands['z'] = cmd_insert_char;
-	_basic_commands['0'] = cmd_insert_char;
-	_basic_commands['1'] = cmd_insert_char;
-	_basic_commands['2'] = cmd_insert_char;
-	_basic_commands['3'] = cmd_insert_char;
-	_basic_commands['4'] = cmd_insert_char;
-	_basic_commands['5'] = cmd_insert_char;
-	_basic_commands['6'] = cmd_insert_char;
-	_basic_commands['7'] = cmd_insert_char;
-	_basic_commands['8'] = cmd_insert_char;
-	_basic_commands['9'] = cmd_insert_char;
-	_basic_commands[','] = cmd_insert_char;
-	_basic_commands['.'] = cmd_insert_char;
-	_basic_commands['-'] = cmd_insert_char;
-	_basic_commands['_'] = cmd_insert_char;
-	_basic_commands['?'] = cmd_insert_char;
-	_basic_commands['!'] = cmd_insert_char;
-	_basic_commands['"'] = cmd_insert_char;
-	_basic_commands['#'] = cmd_insert_char;
-	_basic_commands['$'] = cmd_insert_char;
-	_basic_commands['%'] = cmd_insert_char;
-	_basic_commands['&'] = cmd_insert_char;
-	_basic_commands['/'] = cmd_insert_char;
-	_basic_commands['\\'] = cmd_insert_char;
-	_basic_commands['{'] = cmd_insert_char;
-	_basic_commands['}'] = cmd_insert_char;
-	_basic_commands['['] = cmd_insert_char;
-	_basic_commands[']'] = cmd_insert_char;
-	_basic_commands['('] = cmd_insert_char;
-	_basic_commands[')'] = cmd_insert_char;
-	_basic_commands['='] = cmd_insert_char;
-	_basic_commands['+'] = cmd_insert_char;
-	_basic_commands['?'] = cmd_insert_char;
-	_basic_commands['*'] = cmd_insert_char;
-	_basic_commands['<'] = cmd_insert_char;
-	_basic_commands['>'] = cmd_insert_char;
-	_basic_commands['|'] = cmd_insert_char;
-	_basic_commands[':'] = cmd_insert_char;
-	_basic_commands[';'] = cmd_insert_char;
-	_basic_commands[' '] = cmd_insert_char;
+	_basic_commands[CON_KEY_CTRL_S] = cmd_document_save_as;
 	_basic_commands['\t'] = cmd_insert_char;
-	_basic_commands[0x0D] = cmd_insert_newline;
-	_basic_commands[0x08] = cmd_backspace;
+	_basic_commands[CON_KEY_ENTER] = cmd_insert_newline;
+	_basic_commands[CON_KEY_BACKSPACE] = cmd_backspace;
 	_basic_commands[CON_KEY_LEFT] = cmd_move_left;
 	_basic_commands[CON_KEY_RIGHT] = cmd_move_right;
 	_basic_commands[CON_KEY_UP] = cmd_move_up;
 	_basic_commands[CON_KEY_DOWN] = cmd_move_down;
 
+	_buffer_commands[CON_KEY_ESC] = cmd_reject_buffer;
+	_buffer_commands[CON_KEY_BACKSPACE] = cmd_backspace;
+	_buffer_commands[CON_KEY_LEFT] = cmd_move_left;
+	_buffer_commands[CON_KEY_RIGHT] = cmd_move_right;
 
 	_current_commands = _basic_commands;
 
 
 	new_document();
-
-	int initial_size = sizeof(line_t) + 8 - 1;
-	int size = ((initial_size / 4) + 1) * 4;
-
-	int len = snprintf(buffer, 64, "%dx%d  %d -> %d\n", _width, _height, initial_size, size);
-	sys_chan_write(0, buffer, len);
-
+	update_cursor();
 
 	display_statusbar("Foenix Text Editor, Ctrl+Q to quit");
-	con_set_xy(0, 2);
+		
+	_in_buffer = false;
+	_buffer_line = alloc_line(128);
 
 	while (true)
 	{
@@ -603,8 +726,11 @@ int main(int argc, char * argv[])
 		if (cmd != 0)
 			cmd(key);
 
-		snprintf(buffer, 64, "%c (%04X)  (%d, %d) %d Kb free", (key > 32 && key <= 126) ? (char)key : '.', key, _cursor.line->len, _cursor.line->cap, mem_free() / 1024);
-		display_statusbar(buffer);
+		if (!_in_buffer)
+		{
+			snprintf(buffer, 64, "%c (%04X) %d (%d, %d) %d Kb free", (key > 32 && key <= 126) ? (char)key : '.', key, key == CON_KEY_LEFT, _cursor.line->len, _cursor.line->cap, mem_free() / 1024);
+			display_statusbar(buffer);
+		}
 	}
 
 	return 0;

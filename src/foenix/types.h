@@ -199,25 +199,6 @@ typedef short (*p_file_loader)(short chan, long destination, long * start);
 #define CON_IOCTRL_CLEAR_LINE   0x09
 #define CON_IOCTRL_GET_SIZE     0x0A
 
-#define CON_KEY_CTRL_Q          0x11
-
-#define CON_COLOR_BLACK         0
-#define CON_COLOR_RED           1
-#define CON_COLOR_GREEN         2
-#define CON_COLOR_YELLOW        3
-#define CON_COLOR_BLUE          4
-#define CON_COLOR_ORANGE        5
-#define CON_COLOR_CYAN          6
-#define CON_COLOR_GREY          7
-#define CON_COLOR_DARK_GREY     8
-#define CON_COLOR_BRIGHT_RED    9
-#define CON_COLOR_BRIGHT_GREEN  10
-#define CON_COLOR_BRIGHT_YELLOW 11
-#define CON_COLOR_BRIGHT_BLUE   12
-#define CON_COLOR_BRIGHT_ORANGE 13
-#define CON_COLOR_BRIGHT_CYAN   14
-#define CON_COLOR_WHITE         15
-
 
 typedef struct s_con_cursor {
     short screen;
