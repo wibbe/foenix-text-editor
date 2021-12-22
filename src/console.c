@@ -92,16 +92,16 @@ uint8_t con_get_key(void)
 
 				switch (key)
 				{
-					case 'A':
+					case 'A':	// Up
 						return CON_KEY_UP;
 
-					case 'B':
+					case 'B':	// Left
 						return CON_KEY_LEFT;
 
-					case 'C':
+					case 'C': 	// Right
 						return CON_KEY_RIGHT;
 
-					case 'D':
+					case 'D': 	// Down
 						return CON_KEY_DOWN;
 
 					case '1':

@@ -190,10 +190,9 @@ static void new_document(void)
 
 /** Painting **/
 
-static uint16_t get_current_line_number(void)
+static uint16_t get_line_number(line_t *current)
 {
 	line_t * line = _scroll.line;
-	line_t * current = _cursor.line;
 	uint16_t line_number = 0;
 
 	while (line != 0 && line != current)
@@ -203,6 +202,35 @@ static uint16_t get_current_line_number(void)
 	}
 
 	return line_number;
+}
+
+static uint16_t get_current_line_number(void)
+{
+	return get_line_number(_cursor.line);
+}
+
+static void update_cursor(void)
+{
+	line_t *line = _cursor.line;
+
+	_cursor_x = 0;
+	for (uint8_t i = 0; i < _cursor.offset; ++i)
+	{
+		uint8_t ch = line->data[i];
+
+		if (ch == '\t')
+		{
+			uint8_t tab_count = _cursor_x / 2;
+			_cursor_x = (tab_count + 1) * 2;
+		}
+		else
+		{
+			++_cursor_x;
+		}
+	}
+
+	_cursor_y = get_current_line_number();
+	con_set_xy(_cursor_x, _cursor_y);
 }
 
 static void display_statusbar(char * msg)
@@ -219,7 +247,7 @@ static void display_statusbar(char * msg)
 	con_set_xy(_cursor_x, _cursor_y);
 }
 
-static uint8_t redisplay_line(line_t *line)
+static void redisplay_line(line_t *line)
 {
 	con_clear_line();
 
@@ -245,7 +273,6 @@ static uint8_t redisplay_line(line_t *line)
 			sys_chan_write_b(0, ch);
 		}
 	}
-	return pos;
 }
 
 static void redisplay_current_line(void)
@@ -253,9 +280,8 @@ static void redisplay_current_line(void)
 	uint16_t line_number = get_current_line_number();
 	con_set_xy(0, line_number);
 
-	_cursor_x = redisplay_line(_cursor.line);
-	_cursor_y = line_number;
-	con_set_xy(_cursor_x, _cursor_y);
+	redisplay_line(_cursor.line);
+	update_cursor();
 }
 
 static void redisplay_all(void)
@@ -268,41 +294,31 @@ static void redisplay_all(void)
 
 	while (it != 0 && line_number < (_height - 1))
 	{
-		if (it == _cursor.line)
-			x = redisplay_line(it);
-		else
-			redisplay_line(it);
-
+		redisplay_line(it);
 		sys_chan_write_b(0, '\n');
 		
 		line_number++;
 		it = it->next;
 	}
 
-	_cursor_x = x;
-	_cursor_y = line_number;
-	con_set_xy(_cursor_x, _cursor_y);
+	update_cursor();
 }
 
-static void redisplay_current_line_down(void)
+static void redisplay_line_down(line_t *line)
 {
-	uint16_t line_number = get_current_line_number();
+	uint16_t line_number = get_line_number(line);
 	con_set_xy(0, line_number);
 
-	uint8_t x = redisplay_line(_cursor.line);
-	line_t *it = _cursor.line->next;
-	while (it != 0 && line_number < (_height - 1))
+	while (line != 0 && line_number < (_height - 1))
 	{
-		redisplay_line(it);
+		redisplay_line(line);
 		sys_chan_write_b(0, '\n');
 
 		line_number++;
-		it = it->next;
+		line = line->next;
 	}
 
-	_cursor_x = x;
-	_cursor_y = line_number;
-	con_set_xy(_cursor_x, _cursor_y);
+	update_cursor();
 }
 
 
@@ -334,19 +350,15 @@ static bool cmd_insert_char(uint8_t ch)
 		}
 	}
 
-	uint8_t len = line->len - _cursor.offset;
+	uint8_t len = line->cap - _cursor.offset;
 	for (uint8_t i = 1; i < len; ++i)
-		line->data[line->len - i] = line->data[line->len - i - 1];
+		line->data[line->cap - i] = line->data[line->cap - i - 1];
 
 	line->data[_cursor.offset] = ch;
 	line->len++;
 	_cursor.offset++;
 
 	redisplay_current_line();
-
-	//redisplay_current_line();
-	//update_cursor();
-
 	return true;
 }
 
@@ -370,7 +382,6 @@ static bool cmd_insert_newline(uint8_t ch)
 	{
 		uint8_t left = current_line->len - _cursor.offset;
 		memcpy(new_line->data, current_line->data + _cursor.offset, left);
-		//memset(current_line->data + _cursor.offset, ' ', left);
 
 		current_line->len = _cursor.offset;
 		new_line->len = left;
@@ -386,7 +397,7 @@ static bool cmd_insert_newline(uint8_t ch)
 	}
 	else
 	{
-		redisplay_current_line_down();
+		redisplay_line_down(current_line);
 	}
 
 	return true;
@@ -413,6 +424,71 @@ static bool cmd_backspace(uint8_t ch)
 
 
 	redisplay_current_line();
+	return true;
+}
+
+static bool cmd_move_up(uint8_t ch)
+{
+	if (_cursor.line->prev != 0)
+	{
+		if (_scroll.line == _cursor.line)
+			_scroll.line = _scroll.line->prev;
+
+		_cursor.line = _cursor.line->prev;
+		if (_cursor.line->len < _cursor.offset)
+			_cursor.offset = _cursor.line->len;
+	}
+
+	update_cursor();
+	return true;
+}
+
+static bool cmd_move_down(uint8_t ch)
+{
+	uint8_t line_count = get_current_line_number();
+
+	if (_cursor.line->next != 0)
+	{
+		if (line_count >= _height - 1)
+			_scroll.line = _scroll.line->next;
+
+		_cursor.line = _cursor.line->next;
+		if (_cursor.line->len < _cursor.offset)
+			_cursor.offset = _cursor.line->len;
+	}
+
+	update_cursor();
+	return true;
+}
+
+static bool cmd_move_left(uint8_t ch)
+{
+	if (_cursor.offset > 0)
+	{
+		--_cursor.offset;
+		update_cursor();
+	}
+	else
+	{
+		_cursor.offset = 255;	// this ensures we are placed at the end of the line
+		cmd_move_up(ch);		
+	}
+
+	return true;
+}
+
+static bool cmd_move_right(uint8_t ch)
+{
+	if (_cursor.offset < _cursor.line->len)
+	{
+		++_cursor.offset;
+		update_cursor();
+	}
+	else
+	{
+		_cursor.offset = 0;
+		cmd_move_down(ch);
+	}
 	return true;
 }
 
@@ -498,6 +574,11 @@ int main(int argc, char * argv[])
 	_basic_commands['\t'] = cmd_insert_char;
 	_basic_commands[0x0D] = cmd_insert_newline;
 	_basic_commands[0x08] = cmd_backspace;
+	_basic_commands[CON_KEY_LEFT] = cmd_move_left;
+	_basic_commands[CON_KEY_RIGHT] = cmd_move_right;
+	_basic_commands[CON_KEY_UP] = cmd_move_up;
+	_basic_commands[CON_KEY_DOWN] = cmd_move_down;
+
 
 	_current_commands = _basic_commands;
 
