@@ -10,6 +10,8 @@
 
 
 typedef bool (*command_t)(uint8_t ch);
+typedef void (*buffer_command_t)(void);
+
 
 typedef struct line_t {
 	struct line_t *prev;
@@ -39,13 +41,14 @@ static uint16_t _cursor_x = 0;
 static uint16_t _cursor_y = 0;
 
 static line_t *_document_first_line = 0;
+static char _document_name[32];
 
 static char _buffer_prompt[32] = {0};
 static uint16_t _buffer_prompt_len;
 static line_t *_buffer_line = 0;
 static bool _in_buffer = false;
-static command_t _buffer_accept_cmd;
-static command_t _buffer_reject_cmd;
+static buffer_command_t _buffer_accept_cmd;
+static buffer_command_t _buffer_reject_cmd;
 static location_t _buffer_old_cursor;
 
 
@@ -62,6 +65,7 @@ static line_t _line_cache_128 = {0};
 
 
 static void display_statusbar(char * msg);
+static void buffer_close(void);
 
 
 
@@ -190,17 +194,53 @@ static void free_document(void)
 	_document_first_line = 0;
 }
 
-static void new_document(void)
+static void doc_new(void)
 {
 	free_document();
 
 	_document_first_line = alloc_line(8);
+	memset(_document_name, 0, sizeof(_document_name));
+
 	_scroll.line = _document_first_line;
 	_scroll.offset = 0;
 	_cursor.line = _document_first_line;
 	_cursor.offset = 0;
 }
 
+
+static void doc_save_as(void)
+{
+	buffer_close();
+	if (_buffer_line->len == 0)
+	{
+		display_statusbar("No filename specified");
+		return;
+	}
+
+	// Copy new buffer filename
+	memcpy(_document_name, _buffer_line->data, _buffer_line->len);
+	_document_name[_buffer_line->len] = 0;
+
+	short file_chan = sys_fsys_open(_document_name, FILE_MODE_CREATE_ALWAYS | FILE_MODE_WRITE);
+	if (file_chan <= 0)
+	{
+		display_statusbar("Could not save document to file");
+		return;
+	}
+
+	line_t *it = _document_first_line;
+	while (it != 0)
+	{
+		sys_chan_write(file_chan, it->data, it->len);
+		if (it->next != 0)
+			sys_chan_write_b(file_chan, '\n');
+
+		it = it->next;
+	}	
+
+	sys_fsys_close(file_chan);
+	return;
+}
 
 
 /** Painting **/
@@ -362,7 +402,7 @@ static void display_statusbar(char * msg)
 
 /** Buffer Handling **/
 
-static bool buffer_generic_reject(uint8_t ch)
+static void buffer_close(void)
 {
 	_in_buffer = false;
 	_cursor = _buffer_old_cursor;
@@ -371,11 +411,11 @@ static bool buffer_generic_reject(uint8_t ch)
 	update_cursor();
 }
 
-static void enter_buffer(char *prompt, command_t accept, command_t reject)
+static void enter_buffer(char *prompt, buffer_command_t accept, buffer_command_t reject)
 {
 	_in_buffer = true;
 	_buffer_accept_cmd = accept;
-	_buffer_reject_cmd = reject == 0 ? buffer_generic_reject : reject;
+	_buffer_reject_cmd = reject == 0 ? buffer_close : reject;
 	_buffer_line->len = 0;
 
 	_buffer_old_cursor = _cursor;
@@ -419,6 +459,8 @@ static bool cmd_insert_char(uint8_t ch)
 			_cursor.line = line;
 			if (_scroll.line == old)
 				_scroll.line = line;
+			if (_document_first_line == old)
+				_document_first_line = line;
 		}
 	}
 
@@ -566,15 +608,21 @@ static bool cmd_move_right(uint8_t ch)
 
 static bool cmd_document_save_as(uint8_t ch)
 {
-	enter_buffer("Save as:", 0, 0);
+	enter_buffer("Save as:", doc_save_as, 0);
+	return true;
+}
+
+static bool cmd_accept_buffer(uint8_t ch)
+{
+	if (_in_buffer && _buffer_accept_cmd)
+		_buffer_accept_cmd();
 	return true;
 }
 
 static bool cmd_reject_buffer(uint8_t ch)
 {
 	if (_in_buffer && _buffer_reject_cmd)
-		_buffer_reject_cmd(ch);
-
+		_buffer_reject_cmd();
 	return true;
 }
 
@@ -702,6 +750,7 @@ int main(int argc, char * argv[])
 	_basic_commands[CON_KEY_UP] = cmd_move_up;
 	_basic_commands[CON_KEY_DOWN] = cmd_move_down;
 
+	_buffer_commands[CON_KEY_ENTER] = cmd_accept_buffer;
 	_buffer_commands[CON_KEY_ESC] = cmd_reject_buffer;
 	_buffer_commands[CON_KEY_BACKSPACE] = cmd_backspace;
 	_buffer_commands[CON_KEY_LEFT] = cmd_move_left;
@@ -710,7 +759,7 @@ int main(int argc, char * argv[])
 	_current_commands = _basic_commands;
 
 
-	new_document();
+	doc_new();
 	update_cursor();
 
 	display_statusbar("Foenix Text Editor, Ctrl+Q to quit");

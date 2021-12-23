@@ -89,6 +89,15 @@
 #define KFN_KBD_LAYOUT          0x54    /* Set the translation tables for the keyboard */
 #define KFN_ERR_MESSAGE         0x55    /* Return an error description, given an error number */
 
+
+#define	FILE_MODE_READ			0x01
+#define	FILE_MODE_WRITE			0x02
+#define	FILE_MODE_CREATE_NEW	0x04
+#define	FILE_MODE_CREATE_ALWAYS	0x08
+#define	FILE_MODE_OPEN_ALWAYS	0x10
+#define	FILE_MODE_OPEN_APPEND	0x30
+
+
 /*
  * Call into the kernel (provided by assembly)
  */
